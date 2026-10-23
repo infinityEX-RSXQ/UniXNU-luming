@@ -1,0 +1,304 @@
+# GitHub Actions: macOS build runner for the UniXNU-luming (Xiaomi Civi 5 Pro, luming)
+# no-MacBook pipeline.
+#
+# COPY THIS FILE TO:  <your-fork-of-UniXNU>/.github/workflows/macos-build.yml
+# (The workflow must live in the *UniXNU base repository fork*, because it runs
+#  `python3 unixnu ...`; the device repository UniXNU-luming is checked out into ./device.)
+#
+# What it does: runs the build steps that genuinely need Apple's SDK / macOS tools
+# (`unixnu build kernel`, `build userdata`, `build payload`) on a GitHub-hosted macOS
+# runner, then uploads the outputs as artifacts. Nothing is compiled on the phone and
+# nothing is flashed: this workflow contains no fastboot/adb step and performs no device
+# I/O. Package / firmware / boot image steps run outside this workflow (on Windows, in
+# WSL2 or in a second run of the same runner), see prebuild/windows/WINDOWS-ONLY.md.
+#
+# Inputs are documented in ci/README.md. Unlike the upstream template this pinned file
+# fails fast when the payload step is selected without the UNIXNU_UNIQUE_CHIP_ID secret,
+# and when the userdata/Data-seed options are inconsistent.
+name: macOS build (no MacBook)
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_repository:
+        description: "Device repository as owner/name (e.g. your-account/UniXNU-luming)"
+        required: true
+        default: "your-account/UniXNU-luming"
+      device_ref:
+        description: "Device repository ref"
+        required: true
+        default: "main"
+      defconfig:
+        description: "Defconfig name (luming_defconfig for Xiaomi Civi 5 Pro)"
+        required: true
+        default: "luming_defconfig"
+      steps:
+        description: "Build steps to run (kernel is always built; payload needs the UNIXNU_UNIQUE_CHIP_ID secret)"
+        type: choice
+        options:
+          - kernel
+          - kernel userdata
+          - kernel userdata payload
+        default: kernel userdata payload
+      ipsw_url:
+        description: "Target IPSW URL (empty uses [ipsw] url of the device board.toml)"
+        required: false
+        default: ""
+      pre_build:
+        description: "Optional shell commands run in the UniXNU checkout before the kernel build (device repo is DEVICE_DIR)"
+        required: false
+        default: ""
+      trust_cache_url:
+        description: "Trust cache bundle URL (optional)"
+        required: false
+        default: ""
+      owner_trust_cache:
+        description: "Treat the trust cache URL as an owner-signed bundle"
+        type: boolean
+        default: false
+      data_seed_url:
+        description: "Data seed URL (optional)"
+        required: false
+        default: ""
+      grow_gib:
+        description: "Grow the Data seed to this many GiB (optional, needs data_seed_url)"
+        required: false
+        default: ""
+      skip_setup:
+        description: "Mark Setup as done in the Data seed (needs data_seed_url)"
+        type: boolean
+        default: false
+      upload_userdata:
+        description: "Upload the userdata image (large artifact, needs steps to include userdata)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+
+jobs:
+  build:
+    # Pinned runner image: Apple silicon, Homebrew at /opt/homebrew (unixnu finds the
+    # keg-only LLVM there). If an Xcode update ever breaks the pinned XNU build,
+    # change to macos-14 and re-run.
+    runs-on: macos-15
+    timeout-minutes: 360
+    steps:
+      - name: Check out the UniXNU fork (this repository)
+        uses: actions/checkout@v4
+
+      - name: Check out the device repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.device_repository }}
+          ref: ${{ inputs.device_ref }}
+          path: device
+          token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate the inputs (fail fast, before the long build)
+        env:
+          DEVICE_REPOSITORY: ${{ inputs.device_repository }}
+          STEPS: ${{ inputs.steps }}
+          UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+          DATA_SEED_URL: ${{ inputs.data_seed_url }}
+          GROW_GIB: ${{ inputs.grow_gib }}
+          SKIP_SETUP: ${{ inputs.skip_setup }}
+          UPLOAD_USERDATA: ${{ inputs.upload_userdata }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$DEVICE_REPOSITORY" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+            echo "::error::device_repository must be owner/name (got '$DEVICE_REPOSITORY')"
+            exit 1
+          fi
+          if [ "${DEVICE_REPOSITORY%%/*}" = "your-account" ]; then
+            echo "::error::replace the default device_repository 'your-account/UniXNU-luming' with your own GitHub account"
+            exit 1
+          fi
+          if printf '%s' "$STEPS" | grep -q 'payload' && [ -z "$UNIQUE_CHIP_ID" ]; then
+            echo "::error::the payload step needs the repository secret UNIXNU_UNIQUE_CHIP_ID (platform seed; luming board.toml marks it required)"
+            exit 1
+          fi
+          if [ -n "$GROW_GIB" ] && [ -z "$DATA_SEED_URL" ]; then
+            echo "::error::grow_gib needs data_seed_url"
+            exit 1
+          fi
+          if [ "$SKIP_SETUP" = "true" ] && [ -z "$DATA_SEED_URL" ]; then
+            echo "::error::skip_setup needs data_seed_url"
+            exit 1
+          fi
+          if [ "$UPLOAD_USERDATA" = "true" ] && ! printf '%s' "$STEPS" | grep -q 'userdata'; then
+            echo "::error::upload_userdata needs steps to include userdata"
+            exit 1
+          fi
+          echo "inputs OK: device=$DEVICE_REPOSITORY steps=$STEPS"
+
+      - name: Static preflight of the device inputs (fail fast, before the long build)
+        # preflight-inputs.py is copied into this repository root from
+        # prebuild/windows/preflight_inputs.py. It performs the file/value checks the
+        # driver would hit later: [kernel] archives scripts, [kernel.prelink] keys,
+        # [userdata] partition geometry, [payload] ADT/panic-screen tools.
+        run: |
+          set -euo pipefail
+          python3 preflight-inputs.py --base . --device device \
+            --steps "${{ inputs.steps }}" --defconfig "${{ inputs.defconfig }}"
+
+      - name: Report the runner toolchain
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcode-select -p
+          xcrun --sdk iphoneos --find mig || echo 'mig not found for iphoneos'
+          df -h "$GITHUB_WORKSPACE" | tail -n 1
+
+      - name: Install host tools
+        run: |
+          set -euo pipefail
+          brew install cmake ninja unifdef llvm mtools dtc
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify the host tools
+        run: |
+          set -euo pipefail
+          for tool in git make clang cmake ninja unifdef mformat mcopy dtc xcodebuild python3; do
+            printf '%-10s %s\n' "$tool" "$(command -v "$tool" || echo MISSING)"
+          done
+
+      - name: Select the device and fetch the sources
+        run: |
+          set -euo pipefail
+          python3 unixnu defconfig "${{ inputs.defconfig }}" -D "$GITHUB_WORKSPACE/device"
+          python3 unixnu fetch xnu libplatform libdispatch AvailabilityVersions libpthread \
+                                    corecrypto-2023 IOStorageFamily -D "$GITHUB_WORKSPACE/device"
+
+      - name: Prepare optional inputs
+        env:
+          TRUST_CACHE_URL: ${{ inputs.trust_cache_url }}
+          DATA_SEED_URL: ${{ inputs.data_seed_url }}
+          GROW_GIB: ${{ inputs.grow_gib }}
+          SKIP_SETUP: ${{ inputs.skip_setup }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TRUST_CACHE_URL" ]; then
+            curl -fL "$TRUST_CACHE_URL" -o "$RUNNER_TEMP/trustcache"
+          fi
+          if [ -n "$DATA_SEED_URL" ]; then
+            curl -fL "$DATA_SEED_URL" -o "$RUNNER_TEMP/data.dbr"
+            if [ -n "$GROW_GIB" ]; then
+              python3 scripts/seed-data-grow.py --gib "$GROW_GIB" "$RUNNER_TEMP/data.dbr" "$RUNNER_TEMP/data-grow.dbr"
+              mv "$RUNNER_TEMP/data-grow.dbr" "$RUNNER_TEMP/data.dbr"
+            fi
+          fi
+          if [ "$SKIP_SETUP" = "true" ] && [ ! -f "$RUNNER_TEMP/data.dbr" ]; then
+            echo "::error::skip_setup needs data_seed_url"
+            exit 1
+          fi
+
+      - name: Run pre-build steps
+        if: inputs.pre_build != ''
+        env:
+          PRE_BUILD: ${{ inputs.pre_build }}
+          DEVICE_DIR: ${{ github.workspace }}/device
+        run: bash -euo pipefail -c "$PRE_BUILD"
+
+      - name: Build kernel (Xcode iphoneos SDK, prelink against the original kernelcache)
+        env:
+          IPSW_URL: ${{ inputs.ipsw_url }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
+          python3 unixnu build kernel "${args[@]}"
+
+      - name: "Build userdata (hdiutil: raw image for the userdata partition)"
+        if: contains(inputs.steps, 'userdata')
+        env:
+          IPSW_URL: ${{ inputs.ipsw_url }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
+          python3 unixnu build userdata "${args[@]}"
+
+      - name: Build payload (mtools; platform seed from the secret)
+        if: contains(inputs.steps, 'payload')
+        env:
+          UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+          SKIP_SETUP: ${{ inputs.skip_setup }}
+          OWNER_TRUST_CACHE: ${{ inputs.owner_trust_cache }}
+        run: |
+          set -euo pipefail
+          if [ -z "$UNIQUE_CHIP_ID" ]; then
+            echo "::error::the payload step needs the repository secret UNIXNU_UNIQUE_CHIP_ID"
+            exit 1
+          fi
+          args=()
+          if [ -f "$RUNNER_TEMP/trustcache" ]; then
+            if [ "$OWNER_TRUST_CACHE" = "true" ]; then
+              args+=(--owner-trust-cache "$RUNNER_TEMP/trustcache")
+            else
+              args+=(--trust-cache "$RUNNER_TEMP/trustcache")
+            fi
+          fi
+          if [ -f "$RUNNER_TEMP/data.dbr" ]; then args+=(--data-ramdisk "$RUNNER_TEMP/data.dbr"); fi
+          args+=(--unique-chip-id "$UNIQUE_CHIP_ID")
+          if [ "$SKIP_SETUP" = "true" ]; then args+=(--skip-setup); fi
+          python3 unixnu build payload "${args[@]}"
+
+      - name: Upload the kernel and payload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-${{ inputs.defconfig }}
+          path: |
+            out/*/kernel/**
+            out/*/payload/**
+            out/*/logs/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload the userdata image
+        if: inputs.upload_userdata && contains(inputs.steps, 'userdata')
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-userdata-${{ inputs.defconfig }}
+          path: out/*/userdata/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Write the run summary
+        if: always()
+        run: |
+          {
+            echo "## macOS build summary"
+            echo ""
+            echo "- device: \`${{ inputs.device_repository }}@${{ inputs.device_ref }}\`"
+            echo "- defconfig: \`${{ inputs.defconfig }}\`"
+            echo "- steps: \`${{ inputs.steps }}\`"
+            echo "- artifacts: \`unixnu-${{ inputs.defconfig }}\` (kernel/payload/logs)"
+            if [ "${{ inputs.upload_userdata }}" = "true" ]; then
+              echo "- userdata artifact: \`unixnu-userdata-${{ inputs.defconfig }}\`"
+            fi
+            echo ""
+            echo "This run only built artifacts. No flash, no fastboot, no device I/O."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove proprietary inputs (IPSW members, feeds, firmware cache)
+        if: always()
+        run: |
+          rm -rf out/ipsw out/feeds device/.cache/firmware out/*/tree/.cache/firmware
+          rm -f "$RUNNER_TEMP/trustcache" "$RUNNER_TEMP/data.dbr" "$RUNNER_TEMP/data-grow.dbr"
