@@ -94,6 +94,11 @@ jobs:
     steps:
       - name: Check out the UniXNU fork (this repository)
         uses: actions/checkout@v4
+        with:
+          # The kernel needs drivers/ArmCpu, drivers/ArmDTPlatform, drivers/NativeUfs,
+          # drivers/NativeRamBlock, and kits/NativePrelink. They are submodules of the base
+          # repository, not of the device repository.
+          submodules: recursive
 
       - name: Check out the device repository
         uses: actions/checkout@v4
