@@ -222,6 +222,10 @@ jobs:
           DEVICE_DIR: ${{ github.workspace }}/device
         run: bash -euo pipefail -c "$PRE_BUILD"
 
+      - name: Install luming NativePrelink PC-relative rewriter
+        run: |
+          set -euo pipefail
+          cp "$GITHUB_WORKSPACE/device/scripts/native-prelink/emit_prelink.py" kits/NativePrelink/emit_prelink.py
       - name: Build kernel (Xcode iphoneos SDK, prelink against the original kernelcache)
         env:
           IPSW_URL: ${{ inputs.ipsw_url }}
@@ -308,5 +312,6 @@ jobs:
         run: |
           rm -rf out/ipsw out/feeds device/.cache/firmware out/*/tree/.cache/firmware
           rm -f "$RUNNER_TEMP/trustcache" "$RUNNER_TEMP/data.dbr" "$RUNNER_TEMP/data-grow.dbr"
+
 
 
