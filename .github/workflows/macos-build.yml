@@ -228,7 +228,7 @@ jobs:
           set -euo pipefail
           args=()
           if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
-          python3 unixnu build kernel "${args[@]}"
+          python3 unixnu build kernel ${args[@]+"${args[@]}"}
 
       - name: "Build userdata (hdiutil: raw image for the userdata partition)"
         if: contains(inputs.steps, 'userdata')
@@ -238,7 +238,7 @@ jobs:
           set -euo pipefail
           args=()
           if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
-          python3 unixnu build userdata "${args[@]}"
+          python3 unixnu build userdata ${args[@]+"${args[@]}"}
 
       - name: Build payload (mtools; platform seed from the secret)
         if: contains(inputs.steps, 'payload')
@@ -263,7 +263,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/data.dbr" ]; then args+=(--data-ramdisk "$RUNNER_TEMP/data.dbr"); fi
           args+=(--unique-chip-id "$UNIQUE_CHIP_ID")
           if [ "$SKIP_SETUP" = "true" ]; then args+=(--skip-setup); fi
-          python3 unixnu build payload "${args[@]}"
+          python3 unixnu build payload ${args[@]+"${args[@]}"}
 
       - name: Upload the kernel and payload artifacts
         uses: actions/upload-artifact@v4
@@ -307,3 +307,4 @@ jobs:
         run: |
           rm -rf out/ipsw out/feeds device/.cache/firmware out/*/tree/.cache/firmware
           rm -f "$RUNNER_TEMP/trustcache" "$RUNNER_TEMP/data.dbr" "$RUNNER_TEMP/data-grow.dbr"
+
