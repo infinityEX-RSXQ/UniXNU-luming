@@ -81,6 +81,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  GITHUB_TOKEN: ${{ github.token }}
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
 
@@ -307,4 +308,5 @@ jobs:
         run: |
           rm -rf out/ipsw out/feeds device/.cache/firmware out/*/tree/.cache/firmware
           rm -f "$RUNNER_TEMP/trustcache" "$RUNNER_TEMP/data.dbr" "$RUNNER_TEMP/data-grow.dbr"
+
 
