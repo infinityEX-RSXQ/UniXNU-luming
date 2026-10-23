@@ -76,7 +76,7 @@
 +	if (native_mobile_graphics_load_status == 0 &&
 +	    PE_parse_boot_argn("offline-legacy-register", &legacy_register, sizeof(legacy_register)) && legacy_register) {
 +		extern void native_legacy_display_probe(void);
-+		native_legacy_display_probe();
++		/* native legacy display probe disabled for the bootstrap build */
 +	}
 +	int client_probe = 0;
 +	if (native_mobile_graphics_load_status == 0 &&
