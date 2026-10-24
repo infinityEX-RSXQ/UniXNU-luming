@@ -235,6 +235,22 @@ jobs:
           if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
           python3 unixnu build kernel ${args[@]+"${args[@]}"}
 
+      - name: Upload the native kernel for local prelink debugging
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luming-native-kernel
+          path: out/luming/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf
+          if-no-files-found: warn
+
+      - name: Upload the prelink log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luming-prelink-log
+          path: out/luming/logs/prelink.log
+          if-no-files-found: warn
+
       - name: "Build userdata (hdiutil: raw image for the userdata partition)"
         if: contains(inputs.steps, 'userdata')
         env:
