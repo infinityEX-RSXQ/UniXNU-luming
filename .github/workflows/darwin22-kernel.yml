@@ -74,7 +74,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 -u -B device/scripts/ci/build-8796-source.py --base base \
+          python3 -u -B device/scripts/ci/build-8796-source.py --base base --with-ufs \
             2>&1 | tee "$RUNNER_TEMP/luming-host/kernel-console.log"
       - name: Extract failure tail
         if: always()
