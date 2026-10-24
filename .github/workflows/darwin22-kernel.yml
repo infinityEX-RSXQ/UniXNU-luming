@@ -1,0 +1,90 @@
+name: luming darwin22 source kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_repository:
+        description: "luming device repository (owner/name)"
+        required: true
+        default: "infinityEX-RSXQ/-UniXNU-luming"
+      device_ref:
+        description: "Device repository ref"
+        required: true
+        default: "main"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: luming-8796-source
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+
+jobs:
+  kernel:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - name: Checkout reviewed Darwin22 base
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: 75bc13dd34dc4e403826793739e316a264ce00dd
+          path: base
+          persist-credentials: false
+      - name: Checkout luming device input
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.device_repository }}
+          ref: ${{ inputs.device_ref }}
+          path: device
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check fixed host and record actual tools
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/luming-host"
+          {
+            test -d "$DEVELOPER_DIR"
+            echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
+            sw_vers
+            uname -m
+            xcodebuild -version
+            echo "DEVELOPER_DIR=$DEVELOPER_DIR"
+            xcrun --sdk iphoneos --show-sdk-version
+            xcrun --sdk iphoneos --show-sdk-path
+            xcrun --sdk iphoneos clang --version
+            xcrun --sdk iphoneos --find iig
+            xcrun --sdk iphoneos --find mig
+          } 2>&1 | tee "$RUNNER_TEMP/luming-host/toolchain.log"
+      - name: Install base host dependencies
+        run: brew install cmake ninja unifdef
+      - name: Validate fixed source inputs
+        shell: bash
+        run: |
+          test "$(git -C base rev-parse HEAD)" = 75bc13dd34dc4e403826793739e316a264ce00dd
+          python3 -B device/scripts/ci/build-8796-source.py --base base --check
+      - name: Compile and link 8796 source kernel
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -u -B device/scripts/ci/build-8796-source.py --base base \
+            2>&1 | tee "$RUNNER_TEMP/luming-host/kernel-console.log"
+      - name: Collect build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luming-darwin22-kernel-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/luming-host/**
+            ${{ runner.temp }}/nuwa-8796-source/reports/**
+            ${{ runner.temp }}/nuwa-8796-source/build/xnu/ios-obj/**/mach.development.bcm2837*
+            ${{ runner.temp }}/nuwa-8796-source/build/driver-archives/**
+          if-no-files-found: error
+          retention-days: 7
