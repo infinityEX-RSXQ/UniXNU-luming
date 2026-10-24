@@ -95,7 +95,7 @@ jobs:
         with:
           name: luming-darwin22-kernel-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/nuwa-8796-source/build/xnu/ios-obj/**/mach.development.bcm2837*
-            ${{ runner.temp }}/nuwa-8796-source/reports/**
+            ${{ runner.temp }}/nuwa-8796-source/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped
+            ${{ runner.temp }}/nuwa-8796-source/reports/build.json
           if-no-files-found: error
           retention-days: 7
