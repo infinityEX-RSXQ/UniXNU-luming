@@ -248,6 +248,18 @@ jobs:
           path: out/luming/logs/prelink.log
           if-no-files-found: warn
 
+      - name: Extract the public storage ABI reference object
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/device/scripts/extract-storage-abi.py"
+
+      - name: Upload the storage ABI reference
+        uses: actions/upload-artifact@v4
+        with:
+          name: luming-storage-abi
+          path: out/luming/storage-abi/**
+          if-no-files-found: error
+
       - name: "Build userdata (hdiutil: raw image for the userdata partition)"
         if: contains(inputs.steps, 'userdata')
         env:
