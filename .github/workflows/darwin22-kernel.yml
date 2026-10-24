@@ -76,6 +76,19 @@ jobs:
           set -o pipefail
           python3 -u -B device/scripts/ci/build-8796-source.py --base base \
             2>&1 | tee "$RUNNER_TEMP/luming-host/kernel-console.log"
+      - name: Extract failure tail
+        if: always()
+        shell: bash
+        run: |
+          tail -n 2000 "$RUNNER_TEMP/luming-host/kernel-console.log" > "$RUNNER_TEMP/luming-host/failure-tail.txt" 2>/dev/null || true
+      - name: Upload failure tail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luming-darwin22-failure-tail-${{ github.run_id }}
+          path: ${{ runner.temp }}/luming-host/failure-tail.txt
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Collect build evidence
         if: always()
         uses: actions/upload-artifact@v4
