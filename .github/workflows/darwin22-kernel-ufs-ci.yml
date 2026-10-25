@@ -104,7 +104,7 @@ jobs:
           GENI: ${{ inputs.with_geni }}
         run: |
           test "$(git -C base rev-parse HEAD)" = 75bc13dd34dc4e403826793739e316a264ce00dd
-          ARGS=()
+          ARGS=(--with-ufs)
           if [ "$GENI" = "true" ]; then ARGS+=(--with-geni); fi
           python3 -B device/scripts/ci/build-8796-source.py --base base --check "${ARGS[@]}"
       - name: Compile and link 8796 source kernel
