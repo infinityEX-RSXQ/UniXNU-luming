@@ -70,6 +70,34 @@ jobs:
           } 2>&1 | tee "$RUNNER_TEMP/luming-host/toolchain.log"
       - name: Install base host dependencies
         run: brew install cmake ninja unifdef
+      - name: Authenticate GitHub source downloads
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('base/scripts/prepare-xnu-source.py')
+          text = path.read_text()
+          text = text.replace('urllib.request.urlopen(', '_open(')
+          helper = (
+              'import urllib.request\n'
+              '\n'
+              '\n'
+              'def _open(url, timeout=30):\n'
+              '    import os as _os\n'
+              '    request = urllib.request.Request(url)\n'
+              '    token = _os.environ.get("GITHUB_TOKEN")\n'
+              '    if token:\n'
+              '        request.add_header("Authorization", "Bearer " + token)\n'
+              '        request.add_header("Accept", "application/vnd.github+json")\n'
+              '    return urllib.request.urlopen(request, timeout=timeout)\n'
+          )
+          text = text.replace('import urllib.request\n', helper, 1)
+          path.write_text(text)
+          print('patched authenticated GitHub downloads into base/scripts/prepare-xnu-source.py')
+          PY
+
       - name: Validate fixed source inputs
         shell: bash
         env:
@@ -83,6 +111,7 @@ jobs:
         shell: bash
         env:
           GENI: ${{ inputs.with_geni }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -o pipefail
           ARGS=()
